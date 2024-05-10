@@ -81,7 +81,7 @@ class HPB(nn.Module):
                 nn.Dropout(ff_dropout)
             )),
             nn.Conv2d(ff_inner_dim, dim, 1),
-            nn.InstanceNorm2d(ff_inner_dim)
+            nn.InstanceNorm2d(dim)
         )
 
     def forward(self, x):
@@ -186,3 +186,86 @@ class DPSA(nn.Module):
 
         out = rearrange(out, '(b h) (x y) d -> b (h d) x y', x = h, y = w, h = self.heads)
         return self.to_out(out)
+
+
+class ITTR(nn.Module):
+    """ ITTR """
+
+    def __init__(
+        self,
+        dim,
+        height_top_k = 16,
+        width_top_k = 16,
+        dim_head = 32,
+        heads = 8,
+        dropout = 0.
+    ):
+        super().__init__()
+        self.heads = heads
+        self.dim_head = dim_head
+        self.scale = dim_head ** -0.5
+        inner_dim = heads * dim_head
+
+        self.norm = ChanLayerNorm(dim)
+        self.to_qkv = nn.Conv2d(dim, inner_dim * 3, 1, bias = False)
+
+        self.height_top_k = height_top_k
+        self.width_top_k = width_top_k
+
+        self.dropout = nn.Dropout(dropout)
+        self.to_out = nn.Conv2d(inner_dim, dim, 1)
+
+        firstConv = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=(7,7), stride=2, padding=3)
+        firstIN = nn.InstanceNorm2d(num_features=3)
+        gelu = nn.GELU()
+
+        secondConv = nn.Conv2d(in_channels=3, out_channels=256, kernel_size=(3,3), stride=2, padding=1)
+        secondIN = nn.InstanceNorm2d(num_features=256)
+
+        thirdConv = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=(3,3), stride=2, padding=1)
+        thirdIN = nn.InstanceNorm2d(num_features=512)
+
+        upsample = nn.Upsample(scale_factor=2)
+
+        fourthConv = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3,3), padding=1)
+        fourthIN = nn.InstanceNorm2d(num_features=256)
+
+        fifthConv = nn.Conv2d(in_channels=256, out_channels=3, kernel_size=(3,3), padding=1)
+        fifthIN = nn.InstanceNorm2d(num_features=3)
+
+        sixthConv = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=(7,7), padding=3)
+        tanh = nn.Tanh()
+
+
+    def forward(self, x):
+        x = firstConv(x)
+        x = firstIN(x)
+        x = gelu(x)
+
+        x = secondConv(x)
+        x = secondIN(x)
+        x = gelu(x)
+
+        x = thirdConv(x)
+        x = thirdIN(x)
+        x = gelu(x)
+
+        x = block(x)
+
+        x = upsample(x)
+
+        x = fourthConv(x)
+        x = fourthIN(x)
+        x = gelu(x)
+
+        x = upsample(x)
+
+        x = fifthConv(x)
+        x = fifthIN(x)
+        x = gelu(x)
+
+        x = upsample(x)
+
+        x = sixthConv(x)
+        x = tanh(x)
+
